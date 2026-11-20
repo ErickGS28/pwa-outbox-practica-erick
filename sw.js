@@ -3,7 +3,7 @@
 // Mini-wrapper de IndexedDB dentro del contexto del Service Worker
 importScripts('./db-helper.js');
 
-const CACHE_STATIC_NAME = 'static-outbox-v2';
+const CACHE_STATIC_NAME = 'static-outbox-v3';
 const STATIC_FILES = [
   './',
   './index.html',

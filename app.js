@@ -69,12 +69,36 @@ function renderizarColaOutbox() {
 }
 
 // ---------- CREATE: envio resiliente (Fragmentos B y E) ----------
+// fetch con limite de tiempo: en una red sin salida a internet el fetch puede quedarse
+// colgado y el reporte nunca llegaria al .catch que lo encola como 'pendiente'.
+const TIMEOUT_ENVIO_MS = 8000;
+
+function fetchConTimeout(url, opciones) {
+  const controlador = new AbortController();
+  const temporizador = setTimeout(() => controlador.abort(), TIMEOUT_ENVIO_MS);
+
+  return fetch(url, { ...opciones, signal: controlador.signal })
+    .then((respuesta) => {
+      clearTimeout(temporizador);
+      return respuesta;
+    })
+    .catch((error) => {
+      clearTimeout(temporizador);
+      throw error;
+    });
+}
+
 function procesarEnvioReporte(datosFormulario) {
-  return fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: datosFormulario.titulo, body: datosFormulario.descripcion })
-  })
+  // Si el navegador ya sabe que no hay red, ni se intenta el fetch
+  const intentoDeEnvio = navigator.onLine
+    ? fetchConTimeout(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: datosFormulario.titulo, body: datosFormulario.descripcion })
+      })
+    : Promise.reject(new Error('Sin red'));
+
+  return intentoDeEnvio
     .then((respuesta) => {
       if (!respuesta.ok) throw new Error('Error HTTP del servidor');
       return respuesta.json();
@@ -95,11 +119,17 @@ function procesarEnvioReporte(datosFormulario) {
         fechaCreacion: Date.now()
       }).then(() => {
         // Delegar el reenvio al Service Worker si el navegador soporta Background Sync
+        // No se retorna la promesa: si el SW no esta listo o el registro falla,
+        // la UI igual se repinta y el formulario se limpia.
         if ('serviceWorker' in navigator && 'SyncManager' in window) {
-          return navigator.serviceWorker.ready.then((registro) => {
-            console.log('[Outbox] Registrando etiqueta sync-reportes en el SW...');
-            return registro.sync.register('sync-reportes');
-          });
+          navigator.serviceWorker.ready
+            .then((registro) => {
+              console.log('[Outbox] Registrando etiqueta sync-reportes en el SW...');
+              return registro.sync.register('sync-reportes');
+            })
+            .catch((error) => {
+              console.error('[Outbox] No se pudo registrar sync-reportes:', error);
+            });
         }
       });
     })
